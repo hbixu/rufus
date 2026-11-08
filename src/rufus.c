@@ -51,6 +51,7 @@
 #include "wue.h"
 #include "drive.h"
 #include "cregex.h"
+#include "isowrite.h"
 #include "settings.h"
 #include "darkmode.h"
 #include "bled/bled.h"
@@ -133,6 +134,7 @@ BOOL zero_drive = FALSE, list_non_usb_removable_drives = FALSE, enable_file_inde
 BOOL write_as_image = FALSE, write_as_esp = FALSE, use_vds = FALSE, ignore_boot_marker = FALSE, save_image = FALSE;
 BOOL appstore_version = FALSE, is_vds_available = TRUE, persistent_log = FALSE, has_ffu_support = FALSE;
 BOOL expert_mode = FALSE, use_rufus_mbr = TRUE, bcdboot_supports_ex = FALSE, append_silent = FALSE;
+BOOL iso_output = FALSE;	// Write the (customized) Windows ISO to a bootable ISO file instead of a drive
 float fScale = 1.0f;
 int dialog_showing = 0, selection_default = BT_IMAGE, persistence_unit_selection = -1, imop_win_sel = 0;
 int default_fs, fs_type, boot_type, partition_type, target_type;
@@ -817,6 +819,20 @@ static void EnableQuickFormat(BOOL enable, BOOL remove_checkboxes)
 	EnableWindow(hCtrl, enable);
 }
 
+static void EnableIsoOutput(BOOL enable)
+{
+	HWND hCtrl = GetDlgItem(hMainDialog, IDC_ISO_OUTPUT);
+	BOOL eligible = (boot_type == BT_IMAGE) && (image_path != NULL) && IS_ISO_OUTPUT_ELIGIBLE(img_report);
+
+	// Writing to an ISO file is only possible for Windows installation ISOs that have El Torito boot images.
+	// Drop the ISO output mode if the current selection doesn't support it.
+	if (!eligible)
+		iso_output = FALSE;
+	// Always sync the checkbox with the mode (the dialog may have been recreated, e.g. on language change)
+	CheckDlgButton(hMainDialog, IDC_ISO_OUTPUT, iso_output ? BST_CHECKED : BST_UNCHECKED);
+	EnableWindow(hCtrl, enable && eligible);
+}
+
 static void EnableBootOptions(BOOL enable, BOOL remove_checkboxes)
 {
 	BOOL actual_enable_bb, actual_enable = enable;
@@ -879,6 +895,25 @@ void EnableControls(BOOL enable, BOOL remove_checkboxes)
 
 	// Toggle CLOSE/CANCEL
 	SetDlgItemTextU(hMainDialog, IDCANCEL, enable ? uppercase_close : uppercase_cancel);
+
+	EnableIsoOutput(enable);
+	if (IS_ISO_OUTPUT_ACTIVE) {
+		// When writing to an ISO file, no device is used and, besides the image selection,
+		// only the volume label applies.
+		EnableWindow(hDeviceList, FALSE);
+		EnableWindow(GetDlgItem(hMainDialog, IDC_LIST_USB_HDD), FALSE);
+		EnableWindow(hImageOption, FALSE);
+		EnableWindow(hSaveToolbar, FALSE);
+		EnableWindow(hStart, enable);
+		EnableBootOptions(FALSE, FALSE);
+		EnableWindow(GetDlgItem(hMainDialog, IDC_LABEL), enable);
+		EnableWindow(hPartitionScheme, FALSE);
+		EnableWindow(hTargetSystem, FALSE);
+		EnableWindow(GetDlgItem(hMainDialog, IDS_CSM_HELP_TXT), FALSE);
+		EnableWindow(hFileSystem, FALSE);
+		EnableWindow(hClusterSize, FALSE);
+		return;
+	}
 
 	// Only enable the following controls if a device is active
 	enable = (ComboBox_GetCurSel(hDeviceList) < 0) ? FALSE : enable;
@@ -948,6 +983,9 @@ static BOOL PopulateProperties(void)
 
 out:
 	SetProposedLabel(device_index);
+	// When writing to an ISO file, Start doesn't depend on a device being selected
+	if (IS_ISO_OUTPUT_ACTIVE && !op_in_progress)
+		EnableControls(TRUE, FALSE);
 	return TRUE;
 }
 
@@ -1136,6 +1174,8 @@ static void DisplayISOProps(void)
 			(img_report.wininst_version >> 16) & 0xff, (img_report.wininst_version >> 8) & 0xff,
 			(img_report.wininst_version >= SPECIAL_WIM_VERSION) ? "+": "");
 	}
+	PRINT_ISO_PROP(IS_ISO_OUTPUT_ELIGIBLE(img_report), "  Can be written to a bootable ISO file (%s)",
+		img_report.has_etfsboot ? (img_report.has_efisys ? "BIOS and UEFI" : "BIOS only") : "UEFI only");
 	if (img_report.needs_ntfs) {
 		uprintf("  Note: This ISO uses symbolic links and was not designed to work without them.\r\n"
 			"  Because of this, only NTFS will be allowed as the target file system.");
@@ -1504,7 +1544,9 @@ static DWORD WINAPI BootCheckThread(LPVOID param)
 	uint32_t len;
 	WPARAM ret = BOOTCHECK_CANCEL;
 	BOOL in_files_dir = FALSE, esp_already_asked = FALSE;
-	BOOL is_windows_to_go = ((image_options & IMOP_WINTOGO) && (ComboBox_GetCurItemData(hImageOption) == IMOP_WIN_TO_GO));
+	// When writing to an ISO file, only the checks and options that apply to the ISO content are processed
+	BOOL iso_mode = IS_ISO_OUTPUT_ACTIVE;
+	BOOL is_windows_to_go = !iso_mode && ((image_options & IMOP_WINTOGO) && (ComboBox_GetCurItemData(hImageOption) == IMOP_WIN_TO_GO));
 	const char* msg;
 	const char* grub = "grub";
 	const char* core_img = "core.img";
@@ -1520,8 +1562,14 @@ static DWORD WINAPI BootCheckThread(LPVOID param)
 	safe_free(syslinux_ldlinux_buf[1]);
 	append_silent = FALSE;
 
-	if (ComboBox_GetCurSel(hDeviceList) == CB_ERR)
+	if (!iso_mode && (ComboBox_GetCurSel(hDeviceList) == CB_ERR))
 		goto out;
+
+	// Zeroing a drive (Alt-Z) is meaningless when writing to an ISO file
+	if (iso_mode && zero_drive) {
+		uprintf("Drive zeroing is not available when writing to an ISO file");
+		goto out;
+	}
 
 	if ((zero_drive) || (boot_type == BT_NON_BOOTABLE)) {
 		// Nothing to check
@@ -1532,13 +1580,13 @@ static DWORD WINAPI BootCheckThread(LPVOID param)
 	if (boot_type == BT_IMAGE) {
 		if_assert_fails(image_path != NULL)
 			goto out;
-		if (IsSourceImageLocatedOnTargetDrive((DWORD)ComboBox_GetItemData(hDeviceList, ComboBox_GetCurSel(hDeviceList)))) {
+		if (!iso_mode && IsSourceImageLocatedOnTargetDrive((DWORD)ComboBox_GetItemData(hDeviceList, ComboBox_GetCurSel(hDeviceList)))) {
 			// You cannot use an image that is located on the target drive
 			Notification(MB_OK | MB_ICONERROR, lmprintf(MSG_358), lmprintf(MSG_359));
 			goto out;
 		}
 		/* Add 4 KB extra margin for VHD footers and so on */
-		if ((size_check) && (img_report.projected_size > ((uint64_t)SelectedDrive.DiskSize + 4 * KB))) {
+		if (!iso_mode && (size_check) && (img_report.projected_size > ((uint64_t)SelectedDrive.DiskSize + 4 * KB))) {
 			// This ISO image is too big for the selected target
 			Notification(MB_OK | MB_ICONERROR, lmprintf(MSG_088), lmprintf(MSG_089));
 			goto out;
@@ -1559,7 +1607,7 @@ static DWORD WINAPI BootCheckThread(LPVOID param)
 				goto out;
 		}
 
-		if (IS_DD_BOOTABLE(img_report)) {
+		if (!iso_mode && IS_DD_BOOTABLE(img_report)) {
 			if (!img_report.is_iso) {
 				// Pure DD images are fine at this stage
 				write_as_image = TRUE;
@@ -1677,6 +1725,8 @@ static DWORD WINAPI BootCheckThread(LPVOID param)
 				unattend_xml_mask |= i;
 				WriteSetting32(SETTING_WUE_OPTIONS, (UNATTEND_DEFAULT_MASK << 16) | unattend_xml_mask);
 			}
+		} else if (iso_mode) {
+			// No target system or file system checks apply to an ISO file
 		} else if (target_type == TT_UEFI) {
 			if (!IS_EFI_BOOTABLE(img_report)) {
 				// Unsupported ISO
@@ -1696,7 +1746,7 @@ static DWORD WINAPI BootCheckThread(LPVOID param)
 			Notification(MB_OK | MB_ICONERROR, lmprintf(MSG_099), lmprintf(MSG_189));
 			goto out;
 		}
-		if (IS_FAT(fs_type) && img_report.has_4GB_file != 0 && img_report.has_4GB_file != 0x11){
+		if (!iso_mode && IS_FAT(fs_type) && img_report.has_4GB_file != 0 && img_report.has_4GB_file != 0x11){
 			// This ISO image contains a file larger than 4GB file (FAT32)
 			Notification(MB_OK | MB_ICONERROR, lmprintf(MSG_099), lmprintf(MSG_100));
 			goto out;
@@ -1733,10 +1783,14 @@ static DWORD WINAPI BootCheckThread(LPVOID param)
 				selection.privacy_index = _log2(b) + 1;
 				MAP_BIT(UNATTEND_NO_DATA_COLLECTION);
 				if (IS_WINDOWS_11(img_report)) {
-					StrArrayAdd(&selection.choices, lmprintf(MSG_355), TRUE);
-					StrArrayAdd(&selection.tooltips, lmprintf(MSG_371), TRUE);
-					selection.edition_index = _log2(b) + 1;
-					MAP_BIT(UNATTEND_SILENT_INSTALL);
+					// Silent install relies on the layout of a Rufus created USB drive, and could wipe
+					// the wrong disk when booted from an ISO, so it is not offered for ISO files.
+					if (!iso_mode) {
+						StrArrayAdd(&selection.choices, lmprintf(MSG_355), TRUE);
+						StrArrayAdd(&selection.tooltips, lmprintf(MSG_371), TRUE);
+						selection.edition_index = _log2(b) + 1;
+						MAP_BIT(UNATTEND_SILENT_INSTALL);
+					}
 					StrArrayAdd(&selection.choices, lmprintf(MSG_335), TRUE);
 					StrArrayAdd(&selection.tooltips, lmprintf(MSG_366), TRUE);
 					MAP_BIT(UNATTEND_DISABLE_BITLOCKER);
@@ -1772,6 +1826,13 @@ static DWORD WINAPI BootCheckThread(LPVOID param)
 				unattend_xml_mask |= i;
 				WriteSetting32(SETTING_WUE_OPTIONS, (UNATTEND_DEFAULT_MASK << 16) | unattend_xml_mask);
 			}
+		}
+
+		if (iso_mode) {
+			// Nothing else applies when writing to an ISO file, besides having oscdimg available
+			r = EnsureOscdimg();
+			ret = (r > 0) ? BOOTCHECK_PROCEED : ((r < 0) ? BOOTCHECK_DOWNLOAD_ERROR : BOOTCHECK_CANCEL);
+			goto out;
 		}
 
 		if ((img_report.projected_size < MAX_ISO_TO_ESP_SIZE) && HAS_REGULAR_EFI(img_report) &&
@@ -2243,6 +2304,7 @@ static void InitDialog(HWND hDlg)
 	CreateTooltip(hSelectImage, lmprintf(MSG_165), -1);
 	CreateTooltip(GetDlgItem(hDlg, IDC_EXTENDED_LABEL), lmprintf(MSG_166), 10000);
 	CreateTooltip(GetDlgItem(hDlg, IDC_UEFI_MEDIA_VALIDATION), lmprintf(MSG_167), 10000);
+	CreateTooltip(GetDlgItem(hDlg, IDC_ISO_OUTPUT), lmprintf(MSG_375), 10000);
 	CreateTooltip(GetDlgItem(hDlg, IDC_OLD_BIOS_FIXES), lmprintf(MSG_169), -1);
 	CreateTooltip(GetDlgItem(hDlg, IDC_LIST_USB_HDD), lmprintf(MSG_170), -1);
 	CreateTooltip(hStart, lmprintf(MSG_171), -1);
@@ -2285,6 +2347,7 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 	static DWORD DeviceNum = 0;
 	static uint64_t LastRefresh = 0;
 	static BOOL first_log_display = TRUE, isMarquee = FALSE, queued_hotplug_event = FALSE;
+	static BOOL iso_output_op = FALSE, iso_output_done = FALSE;
 	static ULONG ulRegister = 0;
 	static LPITEMIDLIST pidlDesktop = NULL;
 	static SHChangeNotifyEntry NotifyEntry;
@@ -2447,6 +2510,11 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 			break;
 		case IDC_ADVANCED_DRIVE_PROPERTIES:
 			advanced_mode_device = !advanced_mode_device;
+			// Don't leave the ISO file output mode active while its checkbox is hidden
+			if (!advanced_mode_device && iso_output) {
+				iso_output = FALSE;
+				uprintf("ISO file output disabled");
+			}
 			WriteSettingBool(SETTING_ADVANCED_MODE_DEVICE, advanced_mode_device);
 			ToggleAdvancedDeviceOptions(advanced_mode_device);
 			SetBootOptions();
@@ -2668,6 +2736,23 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 				WriteSettingBool(SETTING_ENABLE_RUNTIME_VALIDATION, validate_md5sum);
 			}
 			break;
+		case IDC_ISO_OUTPUT:
+			if ((HIWORD(wParam)) == BN_CLICKED) {
+				iso_output = IsChecked(IDC_ISO_OUTPUT);
+				// Windows To Go cannot apply to an ISO file, so revert to a standard installation
+				if (iso_output && (ComboBox_GetCurItemData(hImageOption) == IMOP_WIN_TO_GO)) {
+					for (i = 0; i < ComboBox_GetCount(hImageOption); i++) {
+						if (ComboBox_GetItemData(hImageOption, i) == IMOP_WIN_STANDARD) {
+							IGNORE_RETVAL(ComboBox_SetCurSel(hImageOption, i));
+							SendMessage(hMainDialog, WM_COMMAND, MAKEWPARAM(IDC_IMAGE_OPTION, CBN_SELCHANGE), (LPARAM)hImageOption);
+							break;
+						}
+					}
+				}
+				uprintf("ISO file output %s", iso_output ? "enabled" : "disabled");
+				EnableControls(TRUE, FALSE);
+			}
+			break;
 		case IDC_LIST_USB_HDD:
 			if ((HIWORD(wParam)) == BN_CLICKED) {
 				enable_HDDs = !enable_HDDs;
@@ -2855,6 +2940,8 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		log_displayed = FALSE;
 		hLogDialog = MyCreateDialog(hMainInstance, IDD_LOG, hDlg, (DLGPROC)LogCallback);
 		InitDialog(hDlg);
+		// Remove anything left over by an ISO file creation that was interrupted
+		CleanupIsoOutputLeftovers();
 		GetDevices(0);
 		EnableControls(TRUE, FALSE);
 		UpdateImage(FALSE);
@@ -3094,6 +3181,31 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		wParam = BOOTCHECK_CANCEL;
 		save_image = FALSE;
 
+		if (IS_ISO_OUTPUT_ACTIVE) {
+			// Writing to an ISO file: no drive is involved, so none of the drive checks below apply
+			char* iso_path = GetIsoOutputPath();
+			if ((iso_path == NULL) || !CheckIsoOutputSpace(iso_path)) {
+				safe_free(iso_path);
+				goto aborted_start;
+			}
+			iso_output_op = TRUE;
+			InitProgress(FALSE);
+			format_thread = CreateThread(NULL, 0, IsoOutputThread, iso_path, 0, NULL);
+			if (format_thread == NULL) {
+				uprintf("Unable to start ISO creation thread");
+				safe_free(iso_path);
+				ErrorStatus = RUFUS_ERROR(APPERR(ERROR_CANT_START_THREAD));
+				PostMessage(hMainDialog, UM_FORMAT_COMPLETED, (WPARAM)FALSE, 0);
+			} else {
+				SetThreadPriority(format_thread, default_thread_priority);
+				uprintf("\r\nISO file creation started");
+				SendMessage(hMainDialog, UM_TIMER_START, 0, 0);
+				// Set focus to the Cancel button
+				SendMessage(hMainDialog, WM_NEXTDLGCTL, (WPARAM)GetDlgItem(hMainDialog, IDCANCEL), TRUE);
+			}
+			break;
+		}
+
 		if ((partition_type == PARTITION_STYLE_MBR) && (SelectedDrive.DiskSize > 2 * TB)) {
 			if (Notification(MB_YESNO | MB_ICONWARNING, lmprintf(MSG_128, "MBR"),
 				lmprintf(MSG_134, SizeToHumanReadable(SelectedDrive.DiskSize - 2 * TB, FALSE, FALSE))) != IDYES)
@@ -3183,11 +3295,14 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 		SendMessage(FindWindowA(MAKEINTRESOURCEA(32770), lmprintf(MSG_049)), WM_COMMAND, IDYES, 0);
 		EnableWindow(GetDlgItem(hMainDialog, IDCANCEL), TRUE);
 		EnableControls(TRUE, FALSE);
-		if (wParam && !save_image) {
+		// No drive was modified when writing to an ISO file, so there's no need to refresh the device list
+		if (wParam && !save_image && !iso_output_op) {
 			uprintf("\r\n");
 			GetDevices(DeviceNum);
 		}
 		save_image = FALSE;
+		iso_output_done = iso_output_op;
+		iso_output_op = FALSE;
 		if (!IS_ERROR(ErrorStatus)) {
 			SendMessage(hProgress, PBM_SETPOS, MAX_PROGRESS, 0);
 			SetTaskbarProgressState(TASKBAR_NOPROGRESS);
@@ -3205,7 +3320,9 @@ static INT_PTR CALLBACK MainCallback(HWND hDlg, UINT message, WPARAM wParam, LPA
 			PrintInfo(0, MSG_212);
 			MessageBeep(MB_ICONERROR);
 			FlashTaskbar(dialog_handle);
-			GetProcessSearch(0, 0x07, TRUE);
+			// Processes that hold the selected drive are irrelevant when writing to an ISO file
+			if (!iso_output_done)
+				GetProcessSearch(0, 0x07, TRUE);
 			// TODO: Fix/Improve this
 			if (BlockingProcessList.Index > 0) {
 				ListDialog(lmprintf(MSG_042), lmprintf(MSG_055), BlockingProcessList.String, BlockingProcessList.Index);

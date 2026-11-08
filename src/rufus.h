@@ -293,6 +293,7 @@ enum action_type {
 	OP_PATCH,
 	OP_FINALIZE,
 	OP_EXTRACT_ZIP,
+	OP_CREATE_ISO,		// Only used when writing to an ISO file (must remain the last operation)
 	OP_MAX
 };
 
@@ -386,6 +387,11 @@ enum EFI_BOOT_TYPE {
 #define IS_EFI_BOOTABLE(r)  (r.has_efi != 0)
 #define IS_BIOS_BOOTABLE(r) (HAS_BOOTMGR(r) || HAS_SYSLINUX(r) || HAS_WINPE(r) || HAS_GRUB(r) || HAS_REACTOS(r) || HAS_KOLIBRIOS(r))
 #define HAS_WINTOGO(r)      (HAS_BOOTMGR(r) && IS_EFI_BOOTABLE(r) && HAS_WININST(r))
+// Windows installation ISOs that can be written to a bootable ISO file instead of a drive
+#define IS_ISO_OUTPUT_ELIGIBLE(r) (r.is_iso && !r.disable_iso && !r.is_windows_img && HAS_BOOTMGR(r) && \
+                                   HAS_WININST(r) && !HAS_WINPE(r) && (r.has_etfsboot || r.has_efisys))
+// TRUE when the user selected ISO file output and the current image supports it
+#define IS_ISO_OUTPUT_ACTIVE (iso_output && (boot_type == BT_IMAGE) && (image_path != NULL) && IS_ISO_OUTPUT_ELIGIBLE(img_report))
 #define HAS_PERSISTENCE(r)  ((HAS_SYSLINUX(r) || HAS_GRUB(r)) && !(HAS_WINDOWS(r) || HAS_REACTOS(r) || HAS_KOLIBRIOS(r)))
 #define IS_FAT(fs)          ((fs == FS_FAT16) || (fs == FS_FAT32))
 #define IS_EXT(fs)          ((fs >= FS_EXT2) && (fs <= FS_EXT4))
@@ -463,6 +469,8 @@ typedef struct {
 	uint8_t has_grub2_fs;
 	BOOLEAN has_compatresources_dll;
 	BOOLEAN has_panther_unattend;
+	BOOLEAN has_etfsboot;				// '/boot/etfsboot.com' (El Torito BIOS boot image, for ISO output)
+	BOOLEAN has_efisys;					// '/efi/microsoft/boot/efisys.bin' (El Torito UEFI boot image, for ISO output)
 	BOOLEAN has_kolibrios;
 	BOOLEAN needs_syslinux_overwrite;
 	BOOLEAN needs_ntfs;
@@ -767,7 +775,7 @@ extern HWND hNBPasses, hLog, hInfo, hProgress;
 extern WORD selected_langid;
 extern DWORD ErrorStatus, DownloadStatus, MainThreadId, LastWriteError;
 extern BOOL use_own_c32[NB_OLD_C32], detect_fakes, op_in_progress, right_to_left_mode;
-extern BOOL allow_dual_uefi_bios, large_drive, usb_debug;
+extern BOOL allow_dual_uefi_bios, large_drive, usb_debug, iso_output;
 extern uint8_t image_options, *pe256ssp;
 extern uint16_t rufus_version[3], embedded_sl_version[2];
 extern uint32_t pe256ssp_size;
@@ -848,7 +856,8 @@ extern char* FileDialog(BOOL save, char* path, const ext_t* ext, UINT* selected_
 extern BOOL FileIO(enum file_io_type io_type, char* path, char** buffer, DWORD* size);
 extern uint8_t* GetResource(HMODULE module, char* name, char* type, const char* desc, DWORD* len, BOOL duplicate);
 extern DWORD GetResourceSize(HMODULE module, char* name, char* type, const char* desc);
-extern DWORD RunCommandWithProgress(const char* cmdline, const char* dir, BOOL log, int msg, const char* pattern);
+extern DWORD RunCommandWithProgressEx(const char* cmdline, const char* dir, BOOL log, int op, int msg, const char* pattern);
+#define RunCommandWithProgress(cmdline, dir, log, msg, pattern) RunCommandWithProgressEx(cmdline, dir, log, OP_FORMAT, msg, pattern)
 #define RunCommand(cmd, dir, log) RunCommandWithProgress(cmd, dir, log, 0, NULL)
 extern BOOL CompareGUID(const GUID *guid1, const GUID *guid2);
 extern BOOL MountRegistryHive(const HKEY key, const char* pszHiveName, const char* pszHivePath);

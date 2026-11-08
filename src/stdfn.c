@@ -795,7 +795,8 @@ DWORD GetResourceSize(HMODULE module, char* name, char* type, const char* desc)
 
 // Run a console command, with optional redirection of stdout and stderr to our log
 // as well as optional progress reporting if msg is not 0.
-DWORD RunCommandWithProgress(const char* cmd, const char* dir, BOOL log, int msg, const char* pattern)
+// The progress is reported against operation 'op' (OP_FORMAT when called through RunCommandWithProgress).
+DWORD RunCommandWithProgressEx(const char* cmd, const char* dir, BOOL log, int op, int msg, const char* pattern)
 {
 	DWORD ret, dwRead, dwAvail, dwPipeSize = 4096;
 	STARTUPINFOA si = { 0 };
@@ -875,7 +876,7 @@ DWORD RunCommandWithProgress(const char* cmd, const char* dir, BOOL log, int msg
 							matches[3][0] = '\0';
 							float f = 0.0f;
 							IGNORE_RETVAL(sscanf(matches[2], "%f", &f));
-							UpdateProgressWithInfo(OP_FORMAT, msg, (uint64_t)(f * 100.0f), 100 * 100ULL);
+							UpdateProgressWithInfo(op, msg, (uint64_t)(f * 100.0f), 100 * 100ULL);
 						} else if (log) {
 							// output may contain a '%' so don't feed it as a naked format string
 							uprintf("%s", output);

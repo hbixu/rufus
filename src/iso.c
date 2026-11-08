@@ -449,6 +449,12 @@ static BOOL check_iso_props(const char* psz_dirname, int64_t file_length, const 
 			(safe_stricmp(psz_basename, "unattend.xml") == 0))
 			img_report.has_panther_unattend = TRUE;
 
+		// Check for the El Torito boot images of Windows media (used for ISO output)
+		if ((safe_stricmp(psz_dirname, "/boot") == 0) && (safe_stricmp(psz_basename, "etfsboot.com") == 0))
+			img_report.has_etfsboot = TRUE;
+		if ((safe_stricmp(psz_dirname, "/efi/microsoft/boot") == 0) && (safe_stricmp(psz_basename, "efisys.bin") == 0))
+			img_report.has_efisys = TRUE;
+
 		// Check for PE (XP) specific files in "/i386", "/amd64" or "/minint"
 		for (i = 0; i < ARRAYSIZE(pe_dirname); i++)
 			if (safe_stricmp(psz_dirname, pe_dirname[i]) == 0)

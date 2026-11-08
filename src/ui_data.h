@@ -50,6 +50,7 @@ static int image_option_move_ids[] = {
 	IDC_LIST_USB_HDD,
 	IDC_OLD_BIOS_FIXES,
 	IDC_UEFI_MEDIA_VALIDATION,
+	IDC_ISO_OUTPUT,
 	IDS_FORMAT_OPTIONS_TXT,
 	IDS_LABEL_TXT,
 	IDC_LABEL,
@@ -86,6 +87,7 @@ static int advanced_device_move_ids[] = {
 	IDC_LIST_USB_HDD,
 	IDC_OLD_BIOS_FIXES,
 	IDC_UEFI_MEDIA_VALIDATION,
+	IDC_ISO_OUTPUT,
 	IDS_FORMAT_OPTIONS_TXT,
 	IDS_LABEL_TXT,
 	IDC_LABEL,
@@ -115,6 +117,7 @@ static int advanced_device_toggle_ids[] = {
 	IDC_LIST_USB_HDD,
 	IDC_OLD_BIOS_FIXES,
 	IDC_UEFI_MEDIA_VALIDATION,
+	IDC_ISO_OUTPUT,
 };
 
 static int advanced_format_move_ids[] = {
@@ -154,6 +157,7 @@ static int full_width_controls[] = {
 	IDC_LIST_USB_HDD,
 	IDC_OLD_BIOS_FIXES,
 	IDC_UEFI_MEDIA_VALIDATION,
+	IDC_ISO_OUTPUT,
 	IDC_ADVANCED_FORMAT_OPTIONS,
 	IDC_QUICK_FORMAT,
 	IDC_EXTENDED_LABEL,
@@ -164,6 +168,7 @@ static int full_width_checkboxes[] = {
 	IDC_LIST_USB_HDD,
 	IDC_OLD_BIOS_FIXES,
 	IDC_UEFI_MEDIA_VALIDATION,
+	IDC_ISO_OUTPUT,
 	IDC_QUICK_FORMAT,
 	IDC_EXTENDED_LABEL,
 };
@@ -189,6 +194,7 @@ static int adjust_dpi_ids[][5] = {
 	{ IDC_LIST_USB_HDD, 0, 0, 0, 0 },
 	{ IDC_OLD_BIOS_FIXES, 0, 0, 0, 0 },
 	{ IDC_UEFI_MEDIA_VALIDATION, 0, 0, 0, 0 },
+	{ IDC_ISO_OUTPUT, 0, 0, 0, 0 },
 	{ IDS_FORMAT_OPTIONS_TXT, 0, 0, 0, 0 },
 	{ IDS_LABEL_TXT, IDC_LABEL, 0, 0, 0 },
 	{ IDS_FILE_SYSTEM_TXT, IDC_FILE_SYSTEM, IDS_CLUSTER_SIZE_TXT, IDC_CLUSTER_SIZE, 0 },

@@ -351,7 +351,7 @@ void PositionMainControls(HWND hDlg)
 	GetWindowRect(hCtrl, &rc);
 	MapWindowPoints(NULL, hDlg, (POINT*)&rc, 2);
 	advanced_device_section_height = rc.top;
-	hCtrl = GetDlgItem(hDlg, IDC_UEFI_MEDIA_VALIDATION);
+	hCtrl = GetDlgItem(hDlg, IDC_ISO_OUTPUT);
 	GetWindowRect(hCtrl, &rc);
 	MapWindowPoints(NULL, hDlg, (POINT*)&rc, 2);
 	advanced_device_section_height = rc.bottom - advanced_device_section_height;
@@ -547,9 +547,10 @@ void AdjustForLowDPI(HWND hDlg)
 		}
 	}
 
-	section_vpos[1] += 9 * ddy;
-	section_vpos[2] += 16 * ddy + 1;
-	advanced_device_section_height += 3 * ddy;
+	// NB: The advanced device section has 4 rows (List USB HDD, Old BIOS fixes, UEFI validation, ISO output)
+	section_vpos[1] += 10 * ddy;
+	section_vpos[2] += 17 * ddy + 1;
+	advanced_device_section_height += 4 * ddy;
 	advanced_format_section_height += 3 * ddy + 1;
 
 	ResizeDialogs(dy + 2 * ddy);
@@ -1178,7 +1179,13 @@ void InitProgress(BOOL bOnlyFormat)
 	memset(slot_end, 0, sizeof(slot_end));
 	previous_end = 0.0f;
 
-	if (bOnlyFormat) {
+	if (IS_ISO_OUTPUT_ACTIVE) {
+		// Writing to an ISO file: extract, customize, add archive files, then create the ISO
+		nb_slots[OP_FILE_COPY] = -1;
+		if (unattend_xml_path != NULL)
+			nb_slots[OP_PATCH] = -1;
+		nb_slots[OP_CREATE_ISO] = -1;
+	} else if (bOnlyFormat) {
 		nb_slots[OP_FORMAT] = -1;
 	} else {
 		nb_slots[OP_ANALYZE_MBR] = 1;

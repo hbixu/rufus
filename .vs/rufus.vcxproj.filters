@@ -45,6 +45,9 @@
     <ClCompile Include="..\src\iso.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="..\src\isowrite.c">
+      <Filter>Source Files</Filter>
+    </ClCompile>
     <ClCompile Include="..\src\icon.c">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -195,6 +198,9 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\src\wue.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\src\isowrite.h">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="..\src\vhd.h">
